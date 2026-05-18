@@ -376,6 +376,7 @@ html, body {
   border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: 12px;
   overflow: hidden;                  /* 超出直接裁剪 */
+  max-height: calc(6 * 42px);
   opacity: 0;
   transform: translateY(-4px);
   pointer-events: none;
@@ -393,6 +394,7 @@ html, body {
   align-items: center;
   gap: 0.7rem;
   padding: 0.62rem 1rem;
+  min-height: 42px;
   cursor: pointer;
   color: rgba(255, 255, 255, 0.62);
   font-size: 0.9rem;
@@ -402,6 +404,13 @@ html, body {
   text-align: left;
   font-family: inherit;
   transition: background 0.14s, color 0.14s;
+}
+
+.sug-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sug-item:hover,
@@ -473,4 +482,78 @@ html, body {
 #refresh-bg svg {
   width: 14px;
   height: 14px;
+}
+
+@media (max-width: 760px) {
+  #stage {
+    padding: 19vh 1rem 0;
+  }
+
+  #clock {
+    font-size: clamp(2.6rem, 15vw, 4.6rem);
+    letter-spacing: 0.04em;
+  }
+
+  #date-label {
+    font-size: 0.68rem;
+    letter-spacing: 0.14em;
+    margin-bottom: 1.8rem;
+  }
+
+  #search-wrap {
+    width: min(560px, 94vw);
+  }
+
+  #search-box {
+    height: 50px;
+  }
+
+  #search-input {
+    padding-right: 1rem;
+    padding-left: 6.35rem;
+    font-size: 0.95rem;
+  }
+
+  #search-box.focused #search-input {
+    padding-left: 2.65rem;
+  }
+
+  #engine-toggle {
+    padding: 0 0.72rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+  }
+
+  #engine-dropdown {
+    min-width: 132px;
+  }
+
+  .dd-item {
+    padding: 0.62rem 0.85rem;
+  }
+
+  .sug-item {
+    padding: 0.58rem 0.88rem;
+    font-size: 0.86rem;
+  }
+
+  #img-credit {
+    right: 1rem;
+    bottom: 0.9rem;
+  }
+
+  #refresh-bg {
+    left: 1rem;
+    bottom: 0.85rem;
+  }
+}
+
+@media (max-height: 560px) {
+  #stage {
+    padding-top: 12vh;
+  }
+
+  #date-label {
+    margin-bottom: 1rem;
+  }
 }

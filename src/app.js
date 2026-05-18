@@ -26,7 +26,11 @@ const LS = {
   ENGINE: 'hp_engine',     // 当前搜索引擎
   BG_URL: 'hp_bg_url',     // 今日壁纸 URL
   BG_DAY: 'hp_bg_day',     // 壁纸对应日期 YYYY-MM-DD
+  BG_TYPE: 'hp_bg_type',   // 壁纸设备类型 pc / mb
 };
+
+const BG_CACHE_NAME = 'hp-wallpaper-cache-v1';
+const MAX_SUGGESTIONS = 6;
 
 /* ═══════════════════════════════════════════════
    状态
@@ -84,6 +88,35 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function getWallpaperType() {
+  const coarsePointer = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  const narrowScreen = window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
+  return coarsePointer || narrowScreen ? 'mb' : 'pc';
+}
+
+function wallpaperApiUrl(type, bustCache = false) {
+  const params = new URLSearchParams({
+    category: 'acg',
+    type,
+  });
+  params.set('_', bustCache ? Date.now() : todayStr());
+  return `https://uapis.cn/api/v1/random/image?${params.toString()}`;
+}
+
+function cacheImage(url) {
+  if (!('caches' in window) || !url) return Promise.resolve();
+
+  const req = new Request(url, {
+    mode: 'no-cors',
+    cache: 'force-cache',
+  });
+
+  return caches.open(BG_CACHE_NAME)
+    .then(cache => cache.match(req)
+      .then(hit => hit || fetch(req).then(res => cache.put(req, res.clone()))))
+    .catch(() => {});
+}
+
 function applyBg(url) {
   const img  = new Image();
   img.onload = () => {
@@ -99,11 +132,14 @@ function applyBg(url) {
   img.onerror = () => {
     setTimeout(() => refreshBtn.classList.remove('spinning'), 700);
   };
+  img.decoding = 'async';
   img.src = url;
+  cacheImage(url);
 }
 
-function fetchNewBg() {
-  const apiUrl = `https://uapis.cn/api/v1/random/image?category=acg&type=pc&_=${Date.now()}`;
+function fetchNewBg(forceRefresh = false) {
+  const type = getWallpaperType();
+  const apiUrl = wallpaperApiUrl(type, forceRefresh);
 
   // fetch 跟随 302 重定向，r.url 即为最终图片地址
   fetch(apiUrl, { redirect: 'follow' })
@@ -112,6 +148,7 @@ function fetchNewBg() {
       try {
         localStorage.setItem(LS.BG_URL, finalUrl);
         localStorage.setItem(LS.BG_DAY, todayStr());
+        localStorage.setItem(LS.BG_TYPE, type);
       } catch (_) {
         // 存储满了也无所谓，继续显示
       }
@@ -119,6 +156,13 @@ function fetchNewBg() {
     })
     .catch(() => {
       // 跨域或网络失败：让 <img> 自己跟随重定向
+      try {
+        localStorage.setItem(LS.BG_URL, apiUrl);
+        localStorage.setItem(LS.BG_DAY, todayStr());
+        localStorage.setItem(LS.BG_TYPE, type);
+      } catch (_) {
+        // 存储满了也无所谓，继续显示
+      }
       applyBg(apiUrl);
     });
 }
@@ -130,13 +174,14 @@ function loadBg(forceRefresh = false) {
   if (!forceRefresh) {
     const cachedUrl = localStorage.getItem(LS.BG_URL);
     const cachedDay = localStorage.getItem(LS.BG_DAY);
-    if (cachedUrl && cachedDay === todayStr()) {
+    const cachedType = localStorage.getItem(LS.BG_TYPE);
+    if (cachedUrl && cachedDay === todayStr() && cachedType === getWallpaperType()) {
       applyBg(cachedUrl);
       return;
     }
   }
 
-  fetchNewBg();
+  fetchNewBg(forceRefresh);
 }
 
 loadBg();
@@ -232,10 +277,94 @@ async function getSuggestions(q) {
     if (Array.isArray(data) && Array.isArray(data[1])) {
       return data[1].filter(s => typeof s === 'string');
     }
-    return [];
   } catch {
-    return [];
+    // 代理不可用时继续尝试浏览器端兜底。
   }
+
+  return getDirectSuggestions(q);
+}
+
+function normalizeSuggestions(data) {
+  if (Array.isArray(data) && Array.isArray(data[1])) {
+    return data[1].filter(s => typeof s === 'string');
+  }
+  if (data && Array.isArray(data.AS && data.AS.Results)) {
+    return data.AS.Results
+      .flatMap(group => Array.isArray(group.Suggests) ? group.Suggests : [])
+      .map(item => item.Txt)
+      .filter(s => typeof s === 'string');
+  }
+  return [];
+}
+
+function jsonp(url, timeoutMs = 1800) {
+  return new Promise((resolve, reject) => {
+    const cbName = `__hpSuggest_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const script = document.createElement('script');
+    const sep = url.includes('?') ? '&' : '?';
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('suggest timeout'));
+    }, timeoutMs);
+
+    function cleanup() {
+      clearTimeout(timer);
+      script.remove();
+      delete window[cbName];
+    }
+
+    window[cbName] = data => {
+      cleanup();
+      resolve(data);
+    };
+
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('suggest failed'));
+    };
+    script.src = `${url}${sep}callback=${cbName}`;
+    document.head.appendChild(script);
+  });
+}
+
+async function getDirectSuggestions(q) {
+  const encoded = encodeURIComponent(q);
+  const endpoints = {
+    google: [
+      { url: `https://suggestqueries.google.com/complete/search?client=firefox&q=${encoded}`, jsonp: true },
+    ],
+    bing: [
+      { url: `https://api.bing.com/osjson.aspx?query=${encoded}`, jsonp: true },
+      { url: `https://api.bing.com/qsonhs.aspx?type=cb&q=${encoded}`, jsonp: true },
+    ],
+  };
+
+  for (const endpoint of endpoints[currentEngine] || []) {
+    try {
+      const data = await getSuggestionEndpoint(endpoint);
+      const items = normalizeSuggestions(data);
+      if (items.length) return items;
+    } catch (_) {
+      // 继续尝试下一个兜底接口。
+    }
+  }
+
+  return [];
+}
+
+async function getSuggestionEndpoint(endpoint) {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 1400);
+    const res = await fetch(endpoint.url, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (res.ok) return res.json();
+  } catch (_) {
+    // CORS 或超时后走 JSONP 兜底。
+  }
+
+  if (endpoint.jsonp) return jsonp(endpoint.url);
+  return [];
 }
 
 function clearSuggestions() {
@@ -255,8 +384,8 @@ function renderSuggestions(items) {
     return;
   }
 
-  // 最多 6 条，多余截断
-  items.slice(0, 6).forEach(text => {
+  // 固定最多 6 条，多余截断，不出现滚动条。
+  items.slice(0, MAX_SUGGESTIONS).forEach(text => {
     const btn = document.createElement('button');
     btn.className = 'sug-item';
     btn.innerHTML = `
