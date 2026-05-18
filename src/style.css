@@ -30,7 +30,8 @@ html, body {
   transform: scale(1.04);
 }
 
-#bg-img {
+#bg-img,
+#bg-next {
   position: absolute;
   inset: 0;
   background-size: cover;
@@ -38,9 +39,11 @@ html, body {
   opacity: 0;
   /* 慢速缓入，1.8s 才到完全可见 */
   transition: opacity 1.8s cubic-bezier(0.25, 0, 0.1, 1);
+  will-change: opacity;
 }
 
-#bg-img.loaded {
+#bg-img.loaded,
+#bg-next.loaded {
   opacity: 1;
 }
 

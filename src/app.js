@@ -39,12 +39,14 @@ let dropdownOpen   = false;
 let selectedSugIdx = -1;
 let suggestTimer   = null;
 let lastQuery      = '';
+let activeBgLayer  = null;
 
 /* ═══════════════════════════════════════════════
    DOM 引用
 ═══════════════════════════════════════════════ */
 const bg           = document.getElementById('bg');
 const bgImg        = document.getElementById('bg-img');
+const bgNext       = document.getElementById('bg-next');
 const overlay      = document.getElementById('overlay');
 const clockEl      = document.getElementById('clock');
 const dateEl       = document.getElementById('date-label');
@@ -114,19 +116,39 @@ function cacheImage(url) {
 function applyCachedBg(url) {
   bgImg.style.backgroundImage = `url('${url}')`;
   bgImg.classList.add('loaded');
+  bgNext.classList.remove('loaded');
+  bgNext.style.backgroundImage = '';
+  activeBgLayer = bgImg;
   cacheImage(url);
 }
 
 function applyBg(url) {
   const img  = new Image();
-  img.onload = () => {
-    bgImg.style.backgroundImage = `url('${url}')`;
-    // 双 rAF：确保浏览器在过渡触发前已经布局好新背景
+  img.onload = async () => {
+    try {
+      if (img.decode) await img.decode();
+    } catch (_) {
+      // decode 失败不阻断显示，onload 已经说明图片可用。
+    }
+
+    const oldLayer = activeBgLayer || bgImg;
+    const nextLayer = oldLayer === bgImg ? bgNext : bgImg;
+
+    nextLayer.classList.remove('loaded');
+    nextLayer.style.backgroundImage = `url('${url}')`;
+
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        bgImg.classList.add('loaded');
+        nextLayer.classList.add('loaded');
       });
     });
+
+    setTimeout(() => {
+      oldLayer.classList.remove('loaded');
+      oldLayer.style.backgroundImage = '';
+      activeBgLayer = nextLayer;
+    }, 1900);
+
     setTimeout(() => refreshBtn.classList.remove('spinning'), 700);
   };
   img.onerror = () => {
@@ -178,6 +200,8 @@ function loadBg(forceRefresh = false) {
     }
   } else {
     bgImg.classList.remove('loaded');
+    bgNext.classList.remove('loaded');
+    activeBgLayer = null;
   }
 
   fetchNewBg(forceRefresh);
