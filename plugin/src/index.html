@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>搜索</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- 背景：纯黑底 + 图片层（淡入） -->
+  <div id="bg">
+    <div id="bg-img"></div>
+    <div id="bg-next"></div>
+  </div>
+  <div id="overlay"></div>
+
+  <!-- 主舞台 -->
+  <div id="stage">
+    <div id="clock">00:00</div>
+    <div id="date-label">--</div>
+
+    <div id="search-wrap">
+
+      <!-- 引擎下拉菜单（绝对定位，独立于 search-box） -->
+      <div id="engine-dropdown">
+        <button class="dd-item" data-engine="google">
+          Google
+          <svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+        </button>
+        <button class="dd-item" data-engine="bing">
+          Bing
+          <svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- 搜索框本体 -->
+      <div id="search-box">
+
+        <!-- 左侧引擎切换按钮（聚焦时淡出） -->
+        <button id="engine-toggle" type="button">
+          <span id="engine-label">Google</span>
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+
+        <!-- 搜索图标（聚焦时淡入，替代引擎按钮） -->
+        <div id="search-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+        </div>
+
+        <!-- 输入框 -->
+        <input id="search-input" type="text" placeholder="搜索…"
+               autocomplete="off" spellcheck="false" />
+      </div>
+
+      <!-- 搜索候选列表 -->
+      <div id="suggestions"></div>
+
+    </div>
+  </div>
+
+  <!-- 图源标注 -->
+  <a id="img-credit" href="https://uapis.cn" target="_blank" rel="noopener">ACG · uapis.cn</a>
+
+  <!-- 换壁纸按钮 -->
+  <button id="refresh-bg" type="button" title="换一张">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="23 4 23 10 17 10"/>
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+    </svg>
+  </button>
+
+  <script src="app.js"></script>
+</body>
+</html>

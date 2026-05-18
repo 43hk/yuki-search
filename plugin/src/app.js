@@ -14,7 +14,7 @@ const ENGINES = {
 
 /* 候选接口
    ─────────────────────────────────────────────
-   直接请求搜索引擎候选接口；失败时返回空候选，不走自有服务器。
+   Edge 插件环境：直接请求搜索引擎候选接口；失败时返回空候选。
    ═══════════════════════════════════════════════ */
 
 /* ═══════════════════════════════════════════════
@@ -359,11 +359,11 @@ async function getDirectSuggestions(q) {
   const encoded = encodeURIComponent(q);
   const endpoints = {
     google: [
-      { url: `https://suggestqueries.google.com/complete/search?client=firefox&q=${encoded}`, jsonp: true },
+      { url: `https://suggestqueries.google.com/complete/search?client=firefox&q=${encoded}`, jsonp: false },
     ],
     bing: [
-      { url: `https://api.bing.com/osjson.aspx?query=${encoded}`, jsonp: true },
-      { url: `https://api.bing.com/qsonhs.aspx?type=cb&q=${encoded}`, jsonp: true },
+      { url: `https://api.bing.com/osjson.aspx?query=${encoded}`, jsonp: false },
+      { url: `https://api.bing.com/qsonhs.aspx?type=cb&q=${encoded}`, jsonp: false },
     ],
   };
 
@@ -388,7 +388,7 @@ async function getSuggestionEndpoint(endpoint) {
     clearTimeout(timer);
     if (res.ok) return res.json();
   } catch (_) {
-    // CORS 或超时后走 JSONP 兜底。
+    // 直连失败就返回空候选，不走自有服务器。
   }
 
   if (endpoint.jsonp) return jsonp(endpoint.url);
