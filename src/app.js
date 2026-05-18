@@ -99,6 +99,10 @@ function wallpaperApiUrl(type) {
   return `https://uapis.cn/api/v1/random/image?${params.toString()}`;
 }
 
+function isStableWallpaperUrl(url) {
+  return !!url && !url.includes('/api/v1/random/image');
+}
+
 function cacheImage(url) {
   if (!('caches' in window) || !url) return Promise.resolve();
 
@@ -167,24 +171,24 @@ function fetchNewBg(forceRefresh = false) {
   fetch(apiUrl, { redirect: 'follow' })
     .then(r => {
       const finalUrl = r.url || apiUrl;
-      try {
-        localStorage.setItem(LS.BG_URL, finalUrl);
-        localStorage.setItem(LS.BG_TYPE, type);
-      } catch (_) {
-        // 存储满了也无所谓，继续显示
-      }
       applyBg(finalUrl);
+      saveBgCache(finalUrl, type);
     })
     .catch(() => {
       // 跨域或网络失败：让 <img> 自己跟随重定向
-      try {
-        localStorage.setItem(LS.BG_URL, apiUrl);
-        localStorage.setItem(LS.BG_TYPE, type);
-      } catch (_) {
-        // 存储满了也无所谓，继续显示
-      }
       applyBg(apiUrl);
     });
+}
+
+function saveBgCache(url, type) {
+  if (!isStableWallpaperUrl(url)) return;
+
+  try {
+    localStorage.setItem(LS.BG_URL, url);
+    localStorage.setItem(LS.BG_TYPE, type);
+  } catch (_) {
+    // 存储满了也无所谓，继续显示
+  }
 }
 
 function loadBg(forceRefresh = false) {
@@ -192,7 +196,12 @@ function loadBg(forceRefresh = false) {
 
   const cachedUrl = localStorage.getItem(LS.BG_URL);
   const cachedType = localStorage.getItem(LS.BG_TYPE);
-  const canUseCached = cachedUrl && cachedType === getWallpaperType();
+  const canUseCached = isStableWallpaperUrl(cachedUrl) && cachedType === getWallpaperType();
+
+  if (cachedUrl && !isStableWallpaperUrl(cachedUrl)) {
+    localStorage.removeItem(LS.BG_URL);
+    localStorage.removeItem(LS.BG_TYPE);
+  }
 
   if (!forceRefresh) {
     if (canUseCached) {

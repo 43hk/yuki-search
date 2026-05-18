@@ -102,12 +102,16 @@ html, body {
   font-family: 'Noto Serif SC', serif;
   font-size: clamp(2.8rem, 7.5vw, 5.5rem);
   font-weight: 300;
-  color: rgba(255, 255, 255, 0.9);
+  color: rgba(255, 255, 255, 0.94);
   letter-spacing: 0.08em;
-  text-shadow: 0 2px 32px rgba(0, 0, 0, 0.6);
+  text-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.75),
+    0 6px 24px rgba(0, 0, 0, 0.72),
+    0 0 42px rgba(255, 255, 255, 0.16);
   margin-bottom: 0.18em;
   transition: opacity var(--t), transform var(--t);
   user-select: none;
+  -webkit-text-stroke: 0.35px rgba(255, 255, 255, 0.12);
 }
 
 #clock.hidden {
@@ -117,12 +121,16 @@ html, body {
 
 #date-label {
   font-size: clamp(0.7rem, 1.4vw, 0.9rem);
-  color: rgba(255, 255, 255, 0.42);
+  color: rgba(255, 255, 255, 0.62);
   letter-spacing: 0.22em;
   text-transform: uppercase;
   margin-bottom: 2.4rem;
   transition: opacity var(--t);
   user-select: none;
+  text-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.8),
+    0 4px 18px rgba(0, 0, 0, 0.7),
+    0 0 22px rgba(255, 255, 255, 0.12);
 }
 
 #date-label.hidden {
