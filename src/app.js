@@ -24,8 +24,7 @@ const SUGGEST_API = '/suggest';
 ═══════════════════════════════════════════════ */
 const LS = {
   ENGINE: 'hp_engine',     // 当前搜索引擎
-  BG_URL: 'hp_bg_url',     // 今日壁纸 URL
-  BG_DAY: 'hp_bg_day',     // 壁纸对应日期 YYYY-MM-DD
+  BG_URL: 'hp_bg_url',     // 最近一次壁纸 URL，用于下次秒显示
   BG_TYPE: 'hp_bg_type',   // 壁纸设备类型 pc / mb
 };
 
@@ -79,27 +78,22 @@ setInterval(updateClock, 1000);
 /* ═══════════════════════════════════════════════
    壁纸管理
    ─────────────────────────────────────────────
-   - 同一天：直接读 localStorage 缓存的 URL，秒显示
-   - 新一天 / 强制刷新：拉取 API，存入缓存
+   - 先读 localStorage 里的上一张图，避免打开时长时间黑屏
+   - 每次进入页面都后台拉取新图，成功后替换并存入缓存
    - 图片对象 onload 后才设置背景，opacity 缓入 1.8s
 ═══════════════════════════════════════════════ */
-function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 function getWallpaperType() {
   const coarsePointer = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
   const narrowScreen = window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
   return coarsePointer || narrowScreen ? 'mb' : 'pc';
 }
 
-function wallpaperApiUrl(type, bustCache = false) {
+function wallpaperApiUrl(type) {
   const params = new URLSearchParams({
     category: 'acg',
     type,
   });
-  params.set('_', bustCache ? Date.now() : todayStr());
+  params.set('_', Date.now());
   return `https://uapis.cn/api/v1/random/image?${params.toString()}`;
 }
 
@@ -115,6 +109,12 @@ function cacheImage(url) {
     .then(cache => cache.match(req)
       .then(hit => hit || fetch(req).then(res => cache.put(req, res.clone()))))
     .catch(() => {});
+}
+
+function applyCachedBg(url) {
+  bgImg.style.backgroundImage = `url('${url}')`;
+  bgImg.classList.add('loaded');
+  cacheImage(url);
 }
 
 function applyBg(url) {
@@ -147,7 +147,6 @@ function fetchNewBg(forceRefresh = false) {
       const finalUrl = r.url || apiUrl;
       try {
         localStorage.setItem(LS.BG_URL, finalUrl);
-        localStorage.setItem(LS.BG_DAY, todayStr());
         localStorage.setItem(LS.BG_TYPE, type);
       } catch (_) {
         // 存储满了也无所谓，继续显示
@@ -158,7 +157,6 @@ function fetchNewBg(forceRefresh = false) {
       // 跨域或网络失败：让 <img> 自己跟随重定向
       try {
         localStorage.setItem(LS.BG_URL, apiUrl);
-        localStorage.setItem(LS.BG_DAY, todayStr());
         localStorage.setItem(LS.BG_TYPE, type);
       } catch (_) {
         // 存储满了也无所谓，继续显示
@@ -168,17 +166,18 @@ function fetchNewBg(forceRefresh = false) {
 }
 
 function loadBg(forceRefresh = false) {
-  bgImg.classList.remove('loaded');
   refreshBtn.classList.add('spinning');
 
+  const cachedUrl = localStorage.getItem(LS.BG_URL);
+  const cachedType = localStorage.getItem(LS.BG_TYPE);
+  const canUseCached = cachedUrl && cachedType === getWallpaperType();
+
   if (!forceRefresh) {
-    const cachedUrl = localStorage.getItem(LS.BG_URL);
-    const cachedDay = localStorage.getItem(LS.BG_DAY);
-    const cachedType = localStorage.getItem(LS.BG_TYPE);
-    if (cachedUrl && cachedDay === todayStr() && cachedType === getWallpaperType()) {
-      applyBg(cachedUrl);
-      return;
+    if (canUseCached) {
+      applyCachedBg(cachedUrl);
     }
+  } else {
+    bgImg.classList.remove('loaded');
   }
 
   fetchNewBg(forceRefresh);
@@ -370,6 +369,7 @@ async function getSuggestionEndpoint(endpoint) {
 function clearSuggestions() {
   sugBox.innerHTML = '';
   sugBox.classList.remove('open');
+  searchBox.classList.remove('suggestions-open');
   selectedSugIdx = -1;
 }
 
@@ -407,6 +407,7 @@ function renderSuggestions(items) {
   });
 
   sugBox.classList.add('open');
+  searchBox.classList.add('suggestions-open');
   selectedSugIdx = -1;
 }
 
