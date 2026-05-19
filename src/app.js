@@ -30,6 +30,7 @@ const LS = {
 const BG_CACHE_NAME = 'hp-wallpaper-cache-v1';
 const MAX_SUGGESTIONS = 6;
 const SUGGEST_DIRECT_TIMEOUT = 650;
+const SUGGEST_JSONP_TIMEOUT = 900;
 const SUGGEST_DEBOUNCE = 50;
 
 /* ═══════════════════════════════════════════════
@@ -427,20 +428,61 @@ function normalizeSuggestions(data) {
   return [];
 }
 
+function canUseJsonpSuggestions() {
+  return !['chrome-extension:', 'moz-extension:', 'edge-extension:'].includes(location.protocol);
+}
+
+function jsonp(url, timeoutMs = SUGGEST_JSONP_TIMEOUT, callbackParam = 'callback') {
+  return new Promise((resolve, reject) => {
+    const cbName = `__hpSuggest_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const script = document.createElement('script');
+    const sep = url.includes('?') ? '&' : '?';
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('suggest timeout'));
+    }, timeoutMs);
+
+    function cleanup() {
+      clearTimeout(timer);
+      script.remove();
+      delete window[cbName];
+    }
+
+    window[cbName] = data => {
+      cleanup();
+      resolve(data);
+    };
+
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('suggest failed'));
+    };
+    script.src = `${url}${sep}${callbackParam}=${cbName}`;
+    document.head.appendChild(script);
+  });
+}
+
 async function getDirectSuggestions(q) {
   const encoded = encodeURIComponent(q);
   const endpoints = {
     google: [
-      `https://suggestqueries.google.com/complete/search?client=chrome&q=${encoded}`,
-      `https://suggestqueries.google.com/complete/search?client=firefox&q=${encoded}`,
+      { url: `https://suggestqueries.google.com/complete/search?client=chrome&q=${encoded}`, transport: 'fetch' },
+      { url: `https://suggestqueries.google.com/complete/search?client=firefox&q=${encoded}`, transport: 'fetch' },
+      { url: `https://suggestqueries.google.com/complete/search?client=chrome&q=${encoded}`, transport: 'jsonp', callbackParam: 'callback' },
+      { url: `https://suggestqueries.google.com/complete/search?client=chrome&q=${encoded}`, transport: 'jsonp', callbackParam: 'jsonp' },
     ],
     bing: [
-      `https://api.bing.com/osjson.aspx?query=${encoded}`,
-      `https://api.bing.com/qsonhs.aspx?type=cb&q=${encoded}`,
+      { url: `https://api.bing.com/osjson.aspx?query=${encoded}`, transport: 'fetch' },
+      { url: `https://api.bing.com/osjson.aspx?query=${encoded}`, transport: 'jsonp', callbackParam: 'callback' },
+      { url: `https://api.bing.com/qsonhs.aspx?type=cb&q=${encoded}`, transport: 'jsonp', callbackParam: 'cb' },
+      { url: `https://api.bing.com/qsonhs.aspx?type=cb&q=${encoded}`, transport: 'jsonp', callbackParam: 'callback' },
     ],
   };
 
-  return firstSuggestionResult(endpoints[currentEngine] || []);
+  const usableEndpoints = (endpoints[currentEngine] || [])
+    .filter(endpoint => endpoint.transport !== 'jsonp' || canUseJsonpSuggestions());
+
+  return firstSuggestionResult(usableEndpoints);
 }
 
 function firstSuggestionResult(endpoints) {
@@ -450,9 +492,9 @@ function firstSuggestionResult(endpoints) {
     let pending = endpoints.length;
     let settled = false;
 
-    endpoints.forEach(async url => {
+    endpoints.forEach(async endpoint => {
       try {
-        const data = await getSuggestionEndpoint(url);
+        const data = await getSuggestionEndpoint(endpoint);
         const items = normalizeSuggestions(data);
         if (!settled && items.length) {
           settled = true;
@@ -471,11 +513,15 @@ function firstSuggestionResult(endpoints) {
   });
 }
 
-async function getSuggestionEndpoint(url) {
+async function getSuggestionEndpoint(endpoint) {
+  if (endpoint.transport === 'jsonp') {
+    return jsonp(endpoint.url, SUGGEST_JSONP_TIMEOUT, endpoint.callbackParam);
+  }
+
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), SUGGEST_DIRECT_TIMEOUT);
-    const res = await fetch(url, { signal: ctrl.signal });
+    const res = await fetch(endpoint.url, { signal: ctrl.signal });
     clearTimeout(timer);
     if (res.ok) return res.json();
   } catch (_) {
