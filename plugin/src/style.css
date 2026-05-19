@@ -474,11 +474,17 @@ html, body {
   color: rgba(255, 255, 255, 0.5);
 }
 
-#refresh-bg {
+#wallpaper-controls {
   position: fixed;
-  bottom: 1.1rem;
   left: 1.4rem;
+  bottom: 1.05rem;
   z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 0.48rem;
+}
+
+.wallpaper-btn {
   background: rgba(0, 0, 0, 0.38);
   border: 1px solid rgba(255, 255, 255, 0.11);
   backdrop-filter: blur(8px);
@@ -494,16 +500,18 @@ html, body {
   transition: color 0.2s, background 0.2s, transform 0.6s ease;
 }
 
-#refresh-bg:hover {
+.wallpaper-btn:hover {
   color: rgba(255, 255, 255, 0.8);
   background: rgba(0, 0, 0, 0.55);
 }
 
-#refresh-bg.spinning {
-  transform: rotate(360deg);
+.wallpaper-btn:disabled {
+  opacity: 0.32;
+  cursor: default;
+  pointer-events: none;
 }
 
-#refresh-bg svg {
+.wallpaper-btn svg {
   width: 14px;
   height: 14px;
 }
@@ -566,7 +574,7 @@ html, body {
     bottom: 0.9rem;
   }
 
-  #refresh-bg {
+  #wallpaper-controls {
     left: 1rem;
     bottom: 0.85rem;
   }

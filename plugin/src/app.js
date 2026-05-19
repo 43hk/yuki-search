@@ -14,7 +14,7 @@ const ENGINES = {
 
 /* 候选接口
    ─────────────────────────────────────────────
-   Edge 插件环境：直接请求搜索引擎候选接口；失败时返回空候选。
+   直接请求搜索引擎候选接口；失败时返回空候选，不走自有服务器。
    ═══════════════════════════════════════════════ */
 
 /* ═══════════════════════════════════════════════
@@ -22,14 +22,15 @@ const ENGINES = {
 ═══════════════════════════════════════════════ */
 const LS = {
   ENGINE: 'hp_engine',     // 当前搜索引擎
-  BG_URL: 'hp_bg_url',     // 最近一次壁纸 URL，用于下次秒显示
+  BG_URL: 'hp_bg_url',     // 当前壁纸 URL，用于上一张回退
+  BG_NEXT: 'hp_bg_next',   // 下次打开优先显示的预缓存壁纸 URL
   BG_TYPE: 'hp_bg_type',   // 壁纸设备类型 pc / mb
 };
 
 const BG_CACHE_NAME = 'hp-wallpaper-cache-v1';
 const MAX_SUGGESTIONS = 6;
-const SUGGEST_DIRECT_TIMEOUT = 900;
-const SUGGEST_DEBOUNCE = 120;
+const SUGGEST_DIRECT_TIMEOUT = 650;
+const SUGGEST_DEBOUNCE = 50;
 
 /* ═══════════════════════════════════════════════
    状态
@@ -40,6 +41,10 @@ let selectedSugIdx = -1;
 let suggestTimer   = null;
 let lastQuery      = '';
 let activeBgLayer  = null;
+let activeBgUrl    = '';
+let previousBgUrl  = '';
+let bgTransitioning = false;
+let suggestRequestSeq = 0;
 const suggestCache = new Map();
 
 /* ═══════════════════════════════════════════════
@@ -59,7 +64,8 @@ const engineLabel  = document.getElementById('engine-label');
 const dropdown     = document.getElementById('engine-dropdown');
 const ddItems      = document.querySelectorAll('.dd-item');
 const sugBox       = document.getElementById('suggestions');
-const refreshBtn   = document.getElementById('refresh-bg');
+const prevBgBtn    = document.getElementById('prev-bg');
+const downloadBtn  = document.getElementById('download-bg');
 
 /* ═══════════════════════════════════════════════
    时钟
@@ -81,8 +87,8 @@ setInterval(updateClock, 1000);
 /* ═══════════════════════════════════════════════
    壁纸管理
    ─────────────────────────────────────────────
-   - 先读 localStorage 里的上一张图，避免打开时长时间黑屏
-   - 每次进入页面都后台拉取新图，成功后替换并存入缓存
+   - 打开页面优先显示上次预缓存壁纸；没有缓存时拉取第一张
+   - 每次显示后后台预缓存下一张，保持静态页面直连第三方图片接口
    - 图片对象 onload 后才设置背景，opacity 缓入 1.8s
 ═══════════════════════════════════════════════ */
 function getWallpaperType() {
@@ -118,16 +124,57 @@ function cacheImage(url) {
     .catch(() => {});
 }
 
+function pruneWallpaperCache() {
+  if (!('caches' in window)) return;
+
+  const keepUrls = new Set(
+    [localStorage.getItem(LS.BG_URL), localStorage.getItem(LS.BG_NEXT)]
+      .filter(isStableWallpaperUrl)
+  );
+
+  caches.open(BG_CACHE_NAME)
+    .then(cache => cache.keys()
+      .then(requests => {
+        requests.forEach(req => {
+          if (!keepUrls.has(req.url)) cache.delete(req);
+        });
+      }))
+    .catch(() => {});
+}
+
+function preloadWallpaperImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(url);
+    img.onerror = reject;
+    img.decoding = 'async';
+    img.src = url;
+  });
+}
+
+function updateWallpaperControls() {
+  if (prevBgBtn) prevBgBtn.disabled = !isStableWallpaperUrl(previousBgUrl);
+  if (downloadBtn) downloadBtn.disabled = !isStableWallpaperUrl(activeBgUrl);
+}
+
+function removeLegacyWallpaperStorage() {
+  localStorage.removeItem('hp_bg_prev');
+  localStorage.removeItem('hp_bg_queue');
+  localStorage.removeItem('hp_bg_index');
+}
+
 function applyCachedBg(url) {
   bgImg.style.backgroundImage = `url('${url}')`;
   bgImg.classList.add('loaded');
   bgNext.classList.remove('loaded');
   bgNext.style.backgroundImage = '';
   activeBgLayer = bgImg;
+  activeBgUrl = url;
+  updateWallpaperControls();
   cacheImage(url);
 }
 
-function applyBg(url) {
+function applyBg(url, { rememberPrevious = true, onDone = null } = {}) {
   const img  = new Image();
   img.onload = async () => {
     try {
@@ -152,33 +199,54 @@ function applyBg(url) {
       oldLayer.classList.remove('loaded');
       oldLayer.style.backgroundImage = '';
       activeBgLayer = nextLayer;
+      if (rememberPrevious && isStableWallpaperUrl(activeBgUrl) && activeBgUrl !== url) {
+        previousBgUrl = activeBgUrl;
+      }
+      activeBgUrl = url;
+      saveBgCache(url, getWallpaperType());
+      updateWallpaperControls();
+      if (onDone) onDone();
     }, 1900);
-
-    setTimeout(() => refreshBtn.classList.remove('spinning'), 700);
   };
   img.onerror = () => {
-    setTimeout(() => refreshBtn.classList.remove('spinning'), 700);
+    bgTransitioning = false;
+    updateWallpaperControls();
   };
   img.decoding = 'async';
   img.src = url;
   cacheImage(url);
 }
 
-function fetchNewBg(forceRefresh = false) {
-  const type = getWallpaperType();
-  const apiUrl = wallpaperApiUrl(type, forceRefresh);
+function resolveWallpaperUrl(type) {
+  const apiUrl = wallpaperApiUrl(type);
 
-  // fetch 跟随 302 重定向，r.url 即为最终图片地址
-  fetch(apiUrl, { redirect: 'follow' })
+  return fetch(apiUrl, { redirect: 'follow' })
     .then(r => {
       const finalUrl = r.url || apiUrl;
-      applyBg(finalUrl);
-      saveBgCache(finalUrl, type);
+      return isStableWallpaperUrl(finalUrl) ? finalUrl : apiUrl;
     })
-    .catch(() => {
-      // 跨域或网络失败：让 <img> 自己跟随重定向
-      applyBg(apiUrl);
-    });
+    .catch(() => apiUrl);
+}
+
+async function preloadNextBg(type) {
+  try {
+    const url = await resolveWallpaperUrl(type);
+    if (!isStableWallpaperUrl(url)) return;
+    await preloadWallpaperImage(url);
+    localStorage.setItem(LS.BG_NEXT, url);
+    localStorage.setItem(LS.BG_TYPE, type);
+    cacheImage(url);
+    pruneWallpaperCache();
+  } catch (_) {
+    // 预缓存失败不影响当前壁纸显示。
+  }
+}
+
+async function fetchAndShowFirstBg(type) {
+  const url = await resolveWallpaperUrl(type);
+  applyBg(url, { rememberPrevious: false });
+  if (isStableWallpaperUrl(url)) saveBgCache(url, type);
+  preloadNextBg(type);
 }
 
 function saveBgCache(url, type) {
@@ -187,44 +255,77 @@ function saveBgCache(url, type) {
   try {
     localStorage.setItem(LS.BG_URL, url);
     localStorage.setItem(LS.BG_TYPE, type);
+    pruneWallpaperCache();
   } catch (_) {
     // 存储满了也无所谓，继续显示
   }
 }
 
-function loadBg(forceRefresh = false) {
-  refreshBtn.classList.add('spinning');
-
-  const cachedUrl = localStorage.getItem(LS.BG_URL);
+function loadBg() {
+  const type = getWallpaperType();
+  const cachedNextUrl = localStorage.getItem(LS.BG_NEXT);
+  const cachedCurrentUrl = localStorage.getItem(LS.BG_URL);
   const cachedType = localStorage.getItem(LS.BG_TYPE);
-  const canUseCached = isStableWallpaperUrl(cachedUrl) && cachedType === getWallpaperType();
+  const canUseCachedNext = isStableWallpaperUrl(cachedNextUrl) && cachedType === type;
 
-  if (cachedUrl && !isStableWallpaperUrl(cachedUrl)) {
-    localStorage.removeItem(LS.BG_URL);
-    localStorage.removeItem(LS.BG_TYPE);
+  removeLegacyWallpaperStorage();
+
+  previousBgUrl = cachedType === type && isStableWallpaperUrl(cachedCurrentUrl) && cachedCurrentUrl !== cachedNextUrl
+    ? cachedCurrentUrl
+    : '';
+
+  if (!canUseCachedNext) {
+    if (cachedNextUrl) localStorage.removeItem(LS.BG_NEXT);
+    fetchAndShowFirstBg(type);
+    updateWallpaperControls();
+    return;
   }
 
-  if (!forceRefresh) {
-    if (canUseCached) {
-      applyCachedBg(cachedUrl);
-    }
-  } else {
-    bgImg.classList.remove('loaded');
-    bgNext.classList.remove('loaded');
-    activeBgLayer = null;
-  }
+  applyCachedBg(cachedNextUrl);
+  saveBgCache(cachedNextUrl, type);
+  preloadNextBg(type);
+}
 
-  fetchNewBg(forceRefresh);
+function downloadCurrentBg() {
+  if (!isStableWallpaperUrl(activeBgUrl)) return;
+
+  const a = document.createElement('a');
+  a.href = activeBgUrl;
+  a.download = `yuki-wallpaper-${Date.now()}.jpg`;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function showPreviousBg() {
+  if (bgTransitioning || !isStableWallpaperUrl(previousBgUrl)) return;
+
+  const targetUrl = previousBgUrl;
+  previousBgUrl = '';
+  bgTransitioning = true;
+  updateWallpaperControls();
+  applyBg(targetUrl, {
+    rememberPrevious: false,
+    onDone: () => {
+      bgTransitioning = false;
+      updateWallpaperControls();
+    },
+  });
 }
 
 loadBg();
-refreshBtn.addEventListener('click', () => loadBg(true));
+prevBgBtn.addEventListener('click', showPreviousBg);
+downloadBtn.addEventListener('click', downloadCurrentBg);
+updateWallpaperControls();
 
 /* ═══════════════════════════════════════════════
    引擎切换 — 持久化到 localStorage
 ═══════════════════════════════════════════════ */
 function setEngine(name) {
   if (!ENGINES[name]) return;
+  suggestRequestSeq += 1;
   currentEngine = name;
   localStorage.setItem(LS.ENGINE, name);
   engineLabel.textContent = ENGINES[name].label;
@@ -298,7 +399,8 @@ async function getSuggestions(q) {
   const cacheKey = `${currentEngine}:${q.trim().toLowerCase()}`;
   if (suggestCache.has(cacheKey)) return suggestCache.get(cacheKey);
 
-  return rememberSuggestions(cacheKey, await getDirectSuggestions(q));
+  const items = await getDirectSuggestions(q);
+  return rememberSuggestions(cacheKey, items);
 }
 
 function rememberSuggestions(key, items) {
@@ -325,73 +427,61 @@ function normalizeSuggestions(data) {
   return [];
 }
 
-function jsonp(url, timeoutMs = 1800) {
-  return new Promise((resolve, reject) => {
-    const cbName = `__hpSuggest_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    const script = document.createElement('script');
-    const sep = url.includes('?') ? '&' : '?';
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('suggest timeout'));
-    }, timeoutMs);
-
-    function cleanup() {
-      clearTimeout(timer);
-      script.remove();
-      delete window[cbName];
-    }
-
-    window[cbName] = data => {
-      cleanup();
-      resolve(data);
-    };
-
-    script.onerror = () => {
-      cleanup();
-      reject(new Error('suggest failed'));
-    };
-    script.src = `${url}${sep}callback=${cbName}`;
-    document.head.appendChild(script);
-  });
-}
-
 async function getDirectSuggestions(q) {
   const encoded = encodeURIComponent(q);
   const endpoints = {
     google: [
-      { url: `https://suggestqueries.google.com/complete/search?client=firefox&q=${encoded}`, jsonp: false },
+      `https://suggestqueries.google.com/complete/search?client=chrome&q=${encoded}`,
+      `https://suggestqueries.google.com/complete/search?client=firefox&q=${encoded}`,
     ],
     bing: [
-      { url: `https://api.bing.com/osjson.aspx?query=${encoded}`, jsonp: false },
-      { url: `https://api.bing.com/qsonhs.aspx?type=cb&q=${encoded}`, jsonp: false },
+      `https://api.bing.com/osjson.aspx?query=${encoded}`,
+      `https://api.bing.com/qsonhs.aspx?type=cb&q=${encoded}`,
     ],
   };
 
-  for (const endpoint of endpoints[currentEngine] || []) {
-    try {
-      const data = await getSuggestionEndpoint(endpoint);
-      const items = normalizeSuggestions(data);
-      if (items.length) return items;
-    } catch (_) {
-      // 继续尝试下一个兜底接口。
-    }
-  }
-
-  return [];
+  return firstSuggestionResult(endpoints[currentEngine] || []);
 }
 
-async function getSuggestionEndpoint(endpoint) {
+function firstSuggestionResult(endpoints) {
+  if (!endpoints.length) return Promise.resolve([]);
+
+  return new Promise(resolve => {
+    let pending = endpoints.length;
+    let settled = false;
+
+    endpoints.forEach(async url => {
+      try {
+        const data = await getSuggestionEndpoint(url);
+        const items = normalizeSuggestions(data);
+        if (!settled && items.length) {
+          settled = true;
+          resolve(items);
+        }
+      } catch (_) {
+        // 等其它并发候选接口。
+      } finally {
+        pending -= 1;
+        if (!settled && pending === 0) {
+          settled = true;
+          resolve([]);
+        }
+      }
+    });
+  });
+}
+
+async function getSuggestionEndpoint(url) {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), SUGGEST_DIRECT_TIMEOUT);
-    const res = await fetch(endpoint.url, { signal: ctrl.signal });
+    const res = await fetch(url, { signal: ctrl.signal });
     clearTimeout(timer);
     if (res.ok) return res.json();
   } catch (_) {
-    // 直连失败就返回空候选，不走自有服务器。
+    // CORS、权限或超时都直接放弃该并发分支。
   }
 
-  if (endpoint.jsonp) return jsonp(endpoint.url);
   return [];
 }
 
@@ -441,7 +531,7 @@ function renderSuggestions(items) {
   selectedSugIdx = -1;
 }
 
-// 输入触发候选请求（防抖 200ms）
+// 输入触发候选请求（轻量防抖，接口并发取最快结果）
 input.addEventListener('input', () => {
   const q = input.value;
   clearTimeout(suggestTimer);
@@ -453,10 +543,18 @@ input.addEventListener('input', () => {
   }
 
   lastQuery = q;
+  const requestSeq = ++suggestRequestSeq;
+
+  const cachedItems = suggestCache.get(`${currentEngine}:${q.trim().toLowerCase()}`);
+  if (cachedItems) {
+    renderSuggestions(cachedItems);
+    return;
+  }
+
   suggestTimer = setTimeout(async () => {
     const items = await getSuggestions(q);
     // 防止旧请求覆盖新请求的结果
-    if (input.value === q) renderSuggestions(items);
+    if (requestSeq === suggestRequestSeq && input.value === q) renderSuggestions(items);
   }, SUGGEST_DEBOUNCE);
 });
 
